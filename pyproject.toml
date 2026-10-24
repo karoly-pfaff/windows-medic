@@ -1,0 +1,288 @@
+# One distribution, five import packages under src/ (docs/architecture.md §2):
+#
+#   windows_medic         the core library: domain, application, infrastructure
+#   windows_medic_root    the composition root: compose(), Container
+#   windows_medic_agent   background monitor (windows-medic-agent, windows-medic-agentw)
+#   windows_medic_cli     operational CLI (windows-medic)
+#   windows_medic_mcp     MCP server for Claude Code (windows-medic-mcp)
+#
+# applications -> windows_medic_root -> windows_medic; nothing points the other way. The
+# import-linter contracts below enforce it. `uv sync --all-groups` installs the product.
+[project]
+name = "windows-medic"
+version = "1.0.0"
+description = "Local Windows diagnostics and recovery for Claude Code over MCP: explains slowdowns from captured evidence and runs verified, audited repairs."
+readme = "README.md"
+authors = [{ name = "Károly Pfaff" }]
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "mcp[cli]>=2.2.0",
+    "psutil>=7.2.2",
+    "pydantic>=2.13.5",
+]
+
+[project.scripts]
+windows-medic = "windows_medic_cli.main:main"
+windows-medic-agent = "windows_medic_agent.main:main"
+windows-medic-mcp = "windows_medic_mcp.server:main"
+# The elevated helper is part of the elevation adapter, not an application: it accepts
+# one allowlisted recipe with typed arguments and re-verifies the target itself.
+windows-medic-elevated = "windows_medic.infrastructure.windows.elevation_helper:main"
+
+[project.gui-scripts]
+# The agent without a console window; what the logon task runs.
+windows-medic-agentw = "windows_medic_agent.main:main"
+
+[build-system]
+requires = ["uv_build>=0.12.12,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = [
+    "windows_medic",
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.0",
+    "import-linter>=2.0",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.6",
+    "types-psutil>=7.0",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff: formatting and linting
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = [".venv", "docs"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "N",         # pep8-naming
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "A",         # builtins shadowing
+    "C4",        # comprehensions
+    "DTZ",       # naive datetimes are forbidden; process identities carry timestamps
+    "T10",       # no leftover debugger calls
+    "T20",       # no stray print(): user output goes through explicit streams
+    "EM",        # exception message hygiene
+    "ISC",       # implicit string concatenation
+    "PIE",
+    "PT",        # pytest style
+    "Q",         # quotes
+    "RSE",
+    "RET",
+    "SIM",
+    "TID",       # absolute imports only (keeps the architecture guard simple)
+    "TC",        # type-checking imports
+    "ARG",       # unused arguments
+    "PTH",       # pathlib over os.path
+    "ERA",       # no commented-out code
+    "PL",        # pylint subset
+    "TRY",       # exception handling hygiene
+    "RUF",
+    "S",         # bandit: includes the shell=True guard (S602/S604/S605/S607)
+    "ANN401",    # no Any in public signatures
+    "BLE",       # no blind `except Exception`
+]
+ignore = [
+    "ISC001",    # conflicts with the formatter
+    "PLR0913",   # argument-count limits are handled by review, not lint
+    "TRY003",    # long exception messages are fine when they are actionable diagnostics
+    "EM101", "EM102",  # inline exception messages are acceptable alongside TRY003
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",      # assert is the pytest assertion mechanism
+    "PLR2004",   # magic values in assertions are the expected values
+    "ARG001", "ARG002",  # fixture parameters are used by injection
+    "S603",      # tests may run the project's own tools with argument arrays
+]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# ---------------------------------------------------------------------------
+# mypy: strict everywhere, including tests
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+disallow_any_unimported = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+pretty = true
+show_error_codes = true
+
+# ---------------------------------------------------------------------------
+# import-linter: architecture boundaries are executable, not just documented
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_packages = [
+    "windows_medic",
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Core layers point inward: infrastructure -> application -> domain"
+type = "layers"
+layers = [
+    "windows_medic.infrastructure",
+    "windows_medic.application",
+    "windows_medic.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain is framework-free and performs no I/O"
+type = "forbidden"
+source_modules = ["windows_medic.domain"]
+forbidden_modules = [
+    "windows_medic.application",
+    "windows_medic.infrastructure",
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+    "mcp",
+    "psutil",
+    "pydantic",
+    "pydantic_settings",
+    "sqlite3",
+    "subprocess",
+    "ctypes",
+    "asyncio",
+    "threading",
+    "socket",
+    "os",
+    "sys",
+    "shutil",
+    "tempfile",
+    "logging",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application depends only on domain and its own ports"
+type = "forbidden"
+source_modules = ["windows_medic.application"]
+forbidden_modules = [
+    "windows_medic.infrastructure",
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+    "mcp",
+    "psutil",
+    "pydantic",
+    "pydantic_settings",
+    "sqlite3",
+    "subprocess",
+    "ctypes",
+]
+
+[[tool.importlinter.contracts]]
+name = "The core library never depends on the composition root or the applications"
+type = "forbidden"
+source_modules = ["windows_medic"]
+forbidden_modules = [
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+]
+
+[[tool.importlinter.contracts]]
+name = "The composition root never depends on the applications"
+type = "forbidden"
+source_modules = ["windows_medic_root"]
+forbidden_modules = [
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+]
+
+[[tool.importlinter.contracts]]
+name = "Applications are wired through the composition root, never directly to infrastructure"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["windows_medic_agent", "windows_medic_cli", "windows_medic_mcp"]
+forbidden_modules = [
+    "windows_medic.infrastructure",
+]
+
+[[tool.importlinter.contracts]]
+name = "Applications do not depend on each other"
+type = "independence"
+modules = ["windows_medic_agent", "windows_medic_cli", "windows_medic_mcp"]
+
+[[tool.importlinter.contracts]]
+name = "MCP handlers are thin: no policies or orchestration services behind the boundary"
+type = "forbidden"
+allow_indirect_imports = true
+source_modules = ["windows_medic_mcp"]
+forbidden_modules = [
+    "windows_medic.domain.policies",
+    "windows_medic.application.services",
+]
+
+# ---------------------------------------------------------------------------
+# pytest and coverage
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
+filterwarnings = ["error"]
+markers = [
+    "windows_integration: touches the real Windows OS; creates and owns its own target processes",
+    "windows_disruptive: restarts real shell components; opt in with WINDOWS_MEDIC_DISRUPTIVE_TESTS=1",
+]
+
+[tool.coverage.run]
+branch = true
+source = [
+    "windows_medic",
+    "windows_medic_root",
+    "windows_medic_agent",
+    "windows_medic_cli",
+    "windows_medic_mcp",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_empty = true
+# Rationale for each exclusion (docs/testing-strategy.md forbids hiding safety code):
+#   - TYPE_CHECKING blocks never execute at runtime.
+#   - `if __name__ == "__main__":` only runs as a script; console scripts call main() directly.
+#   - Protocol/overload stubs consisting of `...` have no executable body.
+exclude_also = [
+    'if TYPE_CHECKING:',
+    'if __name__ == "__main__":',
+    '^\s*\.\.\.$',
+]

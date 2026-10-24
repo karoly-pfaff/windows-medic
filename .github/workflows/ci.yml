@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality gate
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.12"
+          enable-cache: true
+      # uv sync, ruff format/check, mypy strict, import-linter, unit + contract tests with
+      # branch coverage: the same gate as on a developer machine (CONTRIBUTING.md).
+      - name: Run the quality gate
+        shell: powershell   # Windows PowerShell 5.1, which the script targets
+        run: .\scripts\check-quality.ps1
+
+  windows-integration:
+    name: Windows integration
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync --all-groups
+      # Real OS: every test creates and owns the processes it acts on. Tests that restart
+      # the real Explorer or DWM are opt-in and stay skipped here.
+      - name: Run the Windows integration suite
+        run: uv run pytest -m windows_integration
